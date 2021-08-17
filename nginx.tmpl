@@ -3,6 +3,7 @@
 {{ $external_http_port := coalesce $.Env.HTTP_PORT "80" }}
 {{ $external_https_port := coalesce $.Env.HTTPS_PORT "443" }}
 {{ $debug_all := $.Env.DEBUG }}
+{{ $default_root_response := coalesce $.Env.DEFAULT_ROOT "404" }}
 
 {{ define "ssl_policy" }}
 	{{ if eq .ssl_policy "Mozilla-Modern" }}
@@ -59,7 +60,7 @@ location {{ .Path }} {
 	{{ else if eq .Proto "grpc" }}
 		grpc_pass {{ trim .Proto }}://{{ trim .Upstream }};
 	{{ else }}
-		proxy_pass {{ trim .Proto }}://{{ trim .Upstream }}/;
+		proxy_pass {{ trim .Proto }}://{{ trim .Upstream }}{{ trim .Dest }};
 	{{ end }}
 
 	{{ if (exists (printf "/etc/nginx/htpasswd/%s" .Host)) }}
@@ -67,7 +68,9 @@ location {{ .Path }} {
 		auth_basic_user_file	{{ (printf "/etc/nginx/htpasswd/%s" .Host) }};
 	{{ end }}
 
-	{{ if (exists (printf "/etc/nginx/vhost.d/%s_location" .Host)) }}
+	{{ if (exists (printf "/etc/nginx/vhost.d/%s_%s_location" .Host (sha1 .Path) )) }}
+		include {{ printf "/etc/nginx/vhost.d/%s_%s_location" .Host (sha1 .Path) }};
+	{{ else if (exists (printf "/etc/nginx/vhost.d/%s_location" .Host)) }}
 		include {{ printf "/etc/nginx/vhost.d/%s_location" .Host}};
 	{{ else if (exists "/etc/nginx/vhost.d/default_location") }}
 		include /etc/nginx/vhost.d/default_location;
@@ -379,12 +382,18 @@ server {
 	{{ end }}
 
 	{{ if eq $nPaths 0 }}
-		{{ template "location" (dict "Path" "/" "Proto" $proto "Upstream" $upstream_name "Host" $host "Vhostroot" $vhost_root) }}
+		{{ template "location" (dict "Path" "/" "Proto" $proto "Upstream" $upstream_name "Host" $host "Vhostroot" $vhost_root "Dest" "") }}
 	{{ else }}
 		{{ range $path, $container := $paths }}
 			{{ $sum := sha1 $path }}
 			{{ $upstream := printf "%s-%s" $upstream_name $sum }}
-			{{ template "location" (dict "Path" $path "Proto" $proto "Upstream" $upstream "Host" $host "Vhostroot" $vhost_root) }}
+			{{ $dest := (or (first (groupByKeys $container "Env.VIRTUAL_DEST")) "") }}
+			{{ template "location" (dict "Path" $path "Proto" $proto "Upstream" $upstream "Host" $host "Vhostroot" $vhost_root "Dest" $dest) }}
+		{{ end }}
+		{{ if (not (contains $paths "/")) }}
+			location / {
+				return {{ $default_root_response }};
+			}
 		{{ end }}
 	{{ end }}
 }
@@ -416,12 +425,18 @@ server {
 	{{ end }}
 
 	{{ if eq $nPaths 0 }}
-		{{ template "location" (dict "Path" "/" "Proto" $proto "Upstream" $upstream_name "Host" $host "Vhostroot" $vhost_root) }}
+		{{ template "location" (dict "Path" "/" "Proto" $proto "Upstream" $upstream_name "Host" $host "Vhostroot" $vhost_root "Dest" "") }}
 	{{ else }}
 		{{ range $path, $container := $paths }}
 			{{ $sum := sha1 $path }}
 			{{ $upstream := printf "%s-%s" $upstream_name $sum }}
-			{{ template "location" (dict "Path" $path "Proto" $proto "Upstream" $upstream "Host" $host "Vhostroot" $vhost_root) }}
+			{{ $dest := (or (first (groupByKeys $container "Env.VIRTUAL_DEST")) "") }}
+			{{ template "location" (dict "Path" $path "Proto" $proto "Upstream" $upstream "Host" $host "Vhostroot" $vhost_root "Dest" $dest) }}
+		{{ end }}
+		{{ if (not (contains $paths "/")) }}
+			location / {
+				return {{ $default_root_response }};
+			}
 		{{ end }}
 	{{ end }}
 }
